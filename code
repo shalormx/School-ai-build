@@ -1,0 +1,181 @@
+# ==============================
+# SCHOOL AI SYSTEM (WEB APP) - SMART + FRONTEND VERSION
+# ==============================
+
+# -------- 1. INSTALL --------
+# !pip install flask pandas
+
+# -------- 2. IMPORTS --------
+from flask import Flask, request, jsonify, render_template_string, redirect
+import sqlite3
+import pandas as pd
+
+app = Flask(__name__)
+
+# -------- 3. DATABASE --------
+def init_db():
+    conn = sqlite3.connect('school.db')
+    cursor = conn.cursor()
+
+    cursor.execute('''
+    CREATE TABLE IF NOT EXISTS students (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT,
+        class TEXT
+    )
+    ''')
+
+    cursor.execute('''
+    CREATE TABLE IF NOT EXISTS scores (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        student_id INTEGER,
+        subject TEXT,
+        score INTEGER
+    )
+    ''')
+
+    conn.commit()
+    conn.close()
+
+init_db()
+
+# -------- 4. HELPERS --------
+def query_db(query, params=()):
+    conn = sqlite3.connect('school.db')
+    cursor = conn.cursor()
+    cursor.execute(query, params)
+    data = cursor.fetchall()
+    conn.commit()
+    conn.close()
+    return data
+
+# -------- 5. SMART AI ENGINE --------
+def smart_advice(name, perf):
+    avg = perf['average']
+    weak = perf['weak_subjects']
+    strong = perf['strong_subjects']
+
+    advice = []
+
+    # Intelligence layer
+    if avg < 40:
+        advice.append("Critical: Immediate intervention needed. Consider extra lessons and parental involvement.")
+    elif avg < 60:
+        advice.append("Moderate risk: Student needs structured study plan and supervision.")
+    else:
+        advice.append("Good standing: Focus on consistency and excellence.")
+
+    if len(weak) >= 2:
+        advice.append("Pattern detected: Multiple weak subjects may indicate poor study habits or attention issues.")
+
+    if 'Math' in weak:
+        advice.append("Math weakness: Recommend daily practice and step-by-step problem solving.")
+
+    if strong:
+        advice.append(f"Strength leverage: Use {', '.join(strong)} to build confidence.")
+
+    advice.append("Action Plan: Study 1–2 hours daily, revise weekly, and test yourself frequently.")
+
+    return "\n".join(advice)
+
+# -------- 6. PERFORMANCE --------
+def get_perf(student_id):
+    df = pd.read_sql("SELECT subject, score FROM scores WHERE student_id=?", sqlite3.connect('school.db'), params=(student_id,))
+
+    if df.empty:
+        return {"average":0,"weak_subjects":[],"strong_subjects":[]}
+
+    return {
+        "average": round(df['score'].mean(),2),
+        "weak_subjects": df[df['score']<50]['subject'].tolist(),
+        "strong_subjects": df[df['score']>=70]['subject'].tolist()
+    }
+
+# -------- 7. FRONTEND HTML --------
+HTML = """
+<!DOCTYPE html>
+<html>
+<head>
+<title>School AI System</title>
+<style>
+body { font-family: Arial; padding:20px; }
+.card { border:1px solid #ddd; padding:15px; margin:10px; border-radius:10px; }
+</style>
+</head>
+<body>
+<h1>School AI Dashboard</h1>
+
+<div class='card'>
+<h3>Add Student</h3>
+<form method='post' action='/add_student'>
+<input name='name' placeholder='Name'>
+<input name='class' placeholder='Class'>
+<button>Add</button>
+</form>
+</div>
+
+<div class='card'>
+<h3>Add Score</h3>
+<form method='post' action='/add_score'>
+<input name='student_id' placeholder='Student ID'>
+<input name='subject' placeholder='Subject'>
+<input name='score' placeholder='Score'>
+<button>Add</button>
+</form>
+</div>
+
+<div class='card'>
+<h3>Get Advice</h3>
+<form method='get' action='/view'>
+<input name='id' placeholder='Student ID'>
+<button>View</button>
+</form>
+</div>
+
+</body>
+</html>
+"""
+
+# -------- 8. ROUTES --------
+@app.route('/')
+def home():
+    return render_template_string(HTML)
+
+@app.route('/add_student', methods=['POST'])
+def add_student_route():
+    name = request.form.get('name')
+    cls = request.form.get('class')
+    query_db("INSERT INTO students (name,class) VALUES (?,?)", (name,cls))
+    return redirect('/')
+
+@app.route('/add_score', methods=['POST'])
+def add_score_route():
+    sid = request.form.get('student_id')
+    sub = request.form.get('subject')
+    score = int(request.form.get('score'))
+    if 0 <= score <= 100:
+        query_db("INSERT INTO scores (student_id,subject,score) VALUES (?,?,?)", (sid,sub,score))
+    return redirect('/')
+
+@app.route('/view')
+def view():
+    sid = request.args.get('id')
+    student = query_db("SELECT name FROM students WHERE id=?", (sid,))
+    if not student:
+        return "Student not found"
+
+    perf = get_perf(sid)
+    advice = smart_advice(student[0][0], perf)
+
+    return f"""
+    <h2>{student[0][0]}</h2>
+    <p>Average: {perf['average']}</p>
+    <p>Weak: {perf['weak_subjects']}</p>
+    <p>Strong: {perf['strong_subjects']}</p>
+    <pre>{advice}</pre>
+    <a href='/'>Back</a>
+    """
+
+# -------- 9. RUN --------
+if __name__ == '__main__':
+    app.run(debug=True)
